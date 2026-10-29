@@ -206,6 +206,12 @@
 
   /* ===== cena da pista no fundo ===== */
   #scene{ position:fixed; left:0; top:0; width:100vw; height:max(100vh, 480px); z-index:-3; display:block; background:var(--fog); }
+  #sceneVideo{ position:fixed; left:0; top:0; width:100vw; height:max(76vh, 420px); z-index:-4; object-fit:cover; object-position:var(--vpos, 50% 50%); background:#1B2230; }
+  #sceneVideo[hidden]{ display:none; }
+  body.video-on #scene{ background:transparent; }
+  /* película escura no alto para o texto branco ficar legível sobre o vídeo */
+  body.video-on .scene-film{ background:linear-gradient(180deg, rgba(8,12,20,.6) 0, rgba(8,12,20,.22) 34%, rgba(237,240,242,0) 50%, rgba(237,240,242,0) 64%, rgba(237,240,242,.92) 76%, rgba(237,240,242,.98) 100%); }
+  @media print{ #sceneVideo{ display:none !important; } }
   .scene-film{ position:fixed; inset:0; z-index:-2; pointer-events:none;
     background:linear-gradient(180deg, rgba(237,240,242,0) 0, rgba(237,240,242,0) 60%, rgba(237,240,242,.9) 76%, rgba(237,240,242,.97) 100%); }
   .scene-film::after{ content:""; position:absolute; inset:0; background:var(--fog); opacity:calc(var(--fade, 0) * .94); }
@@ -316,7 +322,7 @@
 </style>
 </head>
 <body>
-<canvas id="scene" aria-hidden="true"></canvas><div class="scene-film" aria-hidden="true"></div>
+<video id="sceneVideo" muted playsinline loop preload="auto" aria-hidden="true" hidden></video><canvas id="scene" aria-hidden="true"></canvas><div class="scene-film" aria-hidden="true"></div>
 
 <div class="wrap">
   <header class="top">
@@ -910,7 +916,7 @@
     const f = document.createElement('canvas'); f.width = W * dpr; f.height = H * dpr;
     const y = f.getContext('2d'); y.scale(dpr, dpr);
     const bars = g.mob ? [W * .06, W * .94] : [W * .14, W * .5, W * .86];
-    const frame = scene.kind === 'dia' ? '#C7CED3' : '#1C2126';
+    const frame = scene.kind === 'dia' && !videoOn ? '#C7CED3' : '#1C2126';
     bars.forEach(b => { y.fillStyle = frame; y.fillRect(b - 7, 0, 14, H); y.fillStyle = 'rgba(255,255,255,.12)'; y.fillRect(b - 7, 0, 2, H); });
     y.fillStyle = frame; y.fillRect(0, H * .07, W, 9); y.fillStyle = 'rgba(255,255,255,.1)'; y.fillRect(0, H * .07, W, 1.5);
     // reflexo suave no vidro
@@ -1029,6 +1035,7 @@
       $('routeLine').hidden = false;
     }
     scene.cv = $('scene'); scene.ctx = scene.cv.getContext('2d');
+    if (startVideo()) { scene.on = true; return; }
     try {
       const L = scene.P.cloud[0], Dk = scene.P.cloud[1];
       scene.clouds = [
@@ -1049,10 +1056,42 @@
     scene.nextType = 'pou'; spawn('dec', now - 4500); scene.next = now + 7000;
     scene.raf = requestAnimationFrame(sceneLoop);
   }
-  function sceneFade(){ document.documentElement.style.setProperty('--fade', Math.min(1, Math.max(0, scrollY / (innerHeight * .45))).toFixed(3)); }
+  // vídeo real da pista conforme o horário; se não carregar, entra a cena desenhada
+  const VIDEOS = { dia: ['pista-dia', '62% 70%'], entardecer: ['pista-tarde', '42% 78%'], amanhecer: ['pista-amanhecer', '30% 85%'], noite: ['pista-noite', '42% 78%'] };
+  let videoOn = false;
+  function startVideo(){
+    const v = $('sceneVideo'), [name, pos] = VIDEOS[scene.kind] || VIDEOS.dia;
+    const saveData = navigator.connection && navigator.connection.saveData;
+    v.poster = name + '.jpg'; v.style.setProperty('--vpos', pos); v.hidden = false;
+    videoOn = true;
+    document.body.classList.add('video-on', 'scene-dark');
+    sizeScene(true); drawFrameOnly();
+    if (reduceMotion || saveData) return true;            // só a foto de capa, sem vídeo
+    v.src = name + '.mp4';
+    v.addEventListener('error', fallbackToDrawing, { once: true });
+    const p = v.play(); if (p && p.catch) p.catch(() => {});
+    return true;
+  }
+  function fallbackToDrawing(){
+    if (!videoOn) return;
+    videoOn = false; $('sceneVideo').hidden = true; $('sceneVideo').removeAttribute('src');
+    document.body.classList.remove('video-on'); document.body.classList.toggle('scene-dark', scene.P.dark);
+    sizeScene(true); scene.on = true;
+    if (reduceMotion) { drawScene(performance.now()); return; }
+    const now = performance.now(); scene.nextType = 'pou'; spawn('dec', now - 4500); scene.next = now + 7000;
+    scene.raf = requestAnimationFrame(sceneLoop);
+  }
+  // por cima do vídeo: só os caixilhos da janela do terminal
+  function drawFrameOnly(){ const x = scene.ctx; x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, scene.cv.width, scene.cv.height); x.drawImage(scene.fg, 0, 0); }
+  function sceneFade(){
+    const f = Math.min(1, Math.max(0, scrollY / (innerHeight * .45)));
+    document.documentElement.style.setProperty('--fade', f.toFixed(3));
+    // rolado até o fim do vídeo coberto: pausa para poupar bateria
+    if (videoOn && !reduceMotion) { const v = $('sceneVideo'); if (f > .95 && !v.paused) v.pause(); else if (f <= .95 && v.paused && v.src) { const p = v.play(); if (p && p.catch) p.catch(() => {}); } }
+  }
   addEventListener('scroll', sceneFade, { passive: true });
-  addEventListener('resize', () => { if (scene.on) { sizeScene(false); if (reduceMotion) drawScene(performance.now()); } });
-  document.addEventListener('visibilitychange', () => { if (scene.on && !reduceMotion && !document.hidden && !scene.raf) scene.raf = requestAnimationFrame(sceneLoop); });
+  addEventListener('resize', () => { if (videoOn) { sizeScene(false); drawFrameOnly(); } else if (scene.on) { sizeScene(false); if (reduceMotion) drawScene(performance.now()); } });
+  document.addEventListener('visibilitychange', () => { if (scene.on && !videoOn && !reduceMotion && !document.hidden && !scene.raf) scene.raf = requestAnimationFrame(sceneLoop); });
   sceneFade();
 
   // ---------- celebração da escolha ----------
