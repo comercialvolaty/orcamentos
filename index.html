@@ -176,6 +176,7 @@
   .s-fechado{ background:var(--go); color:#fff; }
   .s-emitido{ background:var(--solid); color:#fff; }
   .s-perdido{ background:var(--red-wash); color:var(--red-ink); }
+  .s-retorno{ background:transparent; color:var(--amber); box-shadow:inset 0 0 0 1.5px var(--amber); }
 
   .deal{ text-align:right; min-width:0; }
   .deal .amount{ font-family:var(--cond); font-weight:600; font-size:27px; line-height:1; font-variant-numeric:tabular-nums; white-space:nowrap; }
@@ -438,6 +439,8 @@
   .gate.st-arquivado{ background:#C3C9CD; color:#fff; }
   .s-arquivado{ background:var(--line-soft); color:var(--steel); }
   .filter.arch{ border-style:dashed; }
+  .filter.follow:not([aria-pressed="true"]){ color:var(--amber); border-color:var(--amber); }
+  kbd{ font:inherit; font-size:12px; font-weight:700; border:1px solid var(--line); border-bottom-width:2px; border-radius:4px; padding:0 5px; color:var(--steel); }
   .bulk{
     position:fixed; left:50%; bottom:18px; transform:translate(-50%, 140%); z-index:45;
     display:flex; align-items:center; gap:8px; width:min(620px, calc(100vw - 24px));
@@ -636,7 +639,7 @@
   <label class="search-wrap">
     <span class="sr">Buscar orçamentos</span>
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-    <input class="search" id="searchInput" type="search" placeholder="Buscar cliente, aeroporto ou companhia">
+    <input class="search" id="searchInput" type="search" title="Atalho: tecla /" placeholder="Buscar cliente, aeroporto ou companhia">
   </label>
   <div class="more notify-wrap">
   <button class="icon-btn" id="bellBtn" type="button" aria-haspopup="true" aria-expanded="false" title="Avisos quando o cliente escolher">
@@ -667,7 +670,7 @@
     <p class="hint warn">O nome do canal funciona como senha. Não compartilhe com clientes.</p>
   </div>
   </div>
-  <button class="primary" id="newBtn" type="button">
+  <button class="primary" id="newBtn" type="button" title="Atalho: tecla N">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
     Novo orçamento
   </button>
@@ -2118,6 +2121,31 @@
     return 'pendente';
   }
   function filterKey(raw, q){ const st = raw.stage || 'aberto'; return st === 'aberto' ? autoStatus(q) : st; }
+  // "fazer retorno": em aberto, sem escolha, não expirado e enviado há mais de 24 h
+  const FOLLOW_MS = 24 * 3600e3;
+  function needsFollow(raw, q){
+    if (raw.archived || (raw.stage || 'aberto') !== 'aberto' || q.selection) return false;
+    if (q.validUntil && Date.now() > q.validUntil) return false;
+    const last = Math.max(raw.followedAt || 0, raw.createdAt || 0);
+    return last && Date.now() - last > FOLLOW_MS;
+  }
+  function followMessage(id){
+    const raw = quotes[id] || {};
+    const first = String(raw.clientName || '').trim().split(/\s+/)[0];
+    return [
+      `Olá${first ? ', ' + first : ''}! Tudo bem?`,
+      '',
+      raw.viewedAt
+        ? 'Vi que você abriu o orçamento de viagem que preparamos. Ficou alguma dúvida? Posso ajudar a escolher a melhor opção.'
+        : 'Passando para saber se você conseguiu ver o orçamento de viagem que preparamos. As opções estão neste link:',
+      clientUrl(id),
+      '',
+      '⚠️ *_Os valores podem mudar a qualquer momento. Se alguma opção servir para você, é bom confirmar logo para garantir o preço._*',
+      '',
+      'Equipe Volaty Turismo'
+    ].join('\n');
+  }
+  function markFollowed(id){ try { db.ref(PATH_QUOTES + '/' + id).update({ followedAt: Date.now() }); } catch(e) {} }
   function quoteMoney(id, q){
     const sel = findSelected(q);
     if (!sel || sel.missing) return null;
@@ -2158,8 +2186,9 @@
       <div class="fig win"><b>${conv}%</b><span>de conversão</span></div>
       <div class="fig"><b title="${fmtBRL(sold)}">${shortMoney(sold)}</b><span>vendido</span></div>
       <div class="fig private"><b title="${marginKnown ? fmtBRL(margin) : ''}">${marginKnown ? shortMoney(margin) : '—'}</b><span>de margem, só você vê</span></div>`;
+    const follow = entries.filter(([id, raw, q]) => needsFollow(raw, q)).length;
     $('greetingSub').textContent = waiting
-      ? `${waiting} ${waiting === 1 ? 'orçamento aguarda' : 'orçamentos aguardam'} resposta do cliente.`
+      ? `${waiting} ${waiting === 1 ? 'orçamento aguarda' : 'orçamentos aguardam'} resposta do cliente` + (follow ? `, ${follow === 1 ? '1 precisa' : follow + ' precisam'} de retorno.` : '.')
       : (total ? 'Nenhum orçamento aguardando resposta.' : 'Crie o primeiro orçamento e envie o link ao cliente.');
   }
 
@@ -2167,10 +2196,11 @@
     const counts = { todos: active.length };
     active.forEach(([id, raw, q]) => { const k = filterKey(raw, q); counts[k] = (counts[k] || 0) + 1; });
     counts.arquivados = archivedCount;
-    const list = [['todos', 'Todos'], ['pendente', 'Aguardando'], ['visualizado', 'Cliente viu'], ['escolheu', 'Escolheram'],
+    counts.retorno = active.filter(([id, raw, q]) => needsFollow(raw, q)).length;
+    const list = [['todos', 'Todos'], ['retorno', 'Fazer retorno'], ['pendente', 'Aguardando'], ['visualizado', 'Cliente viu'], ['escolheu', 'Escolheram'],
                   ['expirado', 'Expirados'], ['fechado', 'Fechados'], ['emitido', 'Emitidos'], ['perdido', 'Perdidos'], ['arquivados', 'Arquivados']];
     $('filters').innerHTML = list.filter(([k]) => k === 'todos' || counts[k] || filter === k).map(([k, t]) =>
-      `<button class="filter${k === 'arquivados' ? ' arch' : ''}" type="button" data-f="${k}" aria-pressed="${filter === k}">${t}<i>${counts[k] || 0}</i></button>`).join('');
+      `<button class="filter${k === 'arquivados' ? ' arch' : ''}${k === 'retorno' ? ' follow' : ''}" type="button" data-f="${k}" aria-pressed="${filter === k}">${t}<i>${counts[k] || 0}</i></button>`).join('');
     $('filters').querySelectorAll('[data-f]').forEach(b => b.addEventListener('click', () => { filter = b.dataset.f; selected.clear(); renderList(); }));
   }
 
@@ -2216,7 +2246,7 @@
       <article class="row${selected.has(id) ? ' picked' : ''}${raw.archived ? ' archived' : ''}" data-card="${id}">
         <div class="gate ${gateCls}">${PLANE}<div class="route">${esc(from)}<small>${arrow}</small>${esc(to)}</div></div>
         <div class="who">
-          <div class="name"><label class="pick"><input type="checkbox" data-sel="${id}"${selected.has(id) ? ' checked' : ''} aria-label="Selecionar orçamento de ${esc(q.clientName || 'cliente')}"></label>${esc(q.clientName || 'Sem nome')} <span class="status s-${shown}">${STATUS_TXT[shown]}</span>${raw.archived ? '<span class="status s-arquivado">Arquivado</span>' : ''}</div>
+          <div class="name"><label class="pick"><input type="checkbox" data-sel="${id}"${selected.has(id) ? ' checked' : ''} aria-label="Selecionar orçamento de ${esc(q.clientName || 'cliente')}"></label>${esc(q.clientName || 'Sem nome')} <span class="status s-${shown}">${STATUS_TXT[shown]}</span>${raw.archived ? '<span class="status s-arquivado">Arquivado</span>' : ''}${needsFollow(raw, q) ? '<span class="status s-retorno" title="Enviado há mais de 24 horas e o cliente ainda não escolheu">Fazer retorno</span>' : ''}</div>
           <div class="trip">${dates ? `<span>${esc(dates)}</span>` : ''}<span>${esc(paxText(q))}</span>${q.flights.length > 1 ? `<span>${q.flights.length} opções</span>` : ''}</div>
         </div>
         <div class="deal">${deal}</div>
@@ -2233,6 +2263,7 @@
               <button class="link-btn" type="button" data-menu="${id}" aria-haspopup="true" aria-expanded="false" aria-label="Mais ações">•••</button>
               <div class="menu" data-menu-for="${id}">
                 <button type="button" data-action="wa" data-id="${id}">Enviar pelo WhatsApp</button>
+                ${!q.selection && !raw.archived ? `<button type="button" data-action="follow" data-id="${id}">Mandar mensagem de retorno</button><button type="button" data-action="followcopy" data-id="${id}">Copiar mensagem de retorno</button>` : ''}
                 <button type="button" data-action="copylink" data-id="${id}">Copiar só o link</button>
                 <button type="button" data-action="open" data-id="${id}">Ver como o cliente</button>
                 <button type="button" data-action="dup" data-id="${id}">Duplicar</button>
@@ -2259,7 +2290,8 @@
     const term = $('searchInput').value.trim().toLowerCase();
     const base = filter === 'arquivados' ? archived : active;
     const shown = base.filter(([id, raw, q]) => {
-      if (filter !== 'todos' && filter !== 'arquivados' && filterKey(raw, q) !== filter) return false;
+      if (filter === 'retorno') { if (!needsFollow(raw, q)) return false; }
+      else if (filter !== 'todos' && filter !== 'arquivados' && filterKey(raw, q) !== filter) return false;
       if (!term) return true;
       const hay = [q.clientName, ...q.flights.flatMap(f => f.legs.flatMap(l => l.segments.flatMap(s =>
         [s.from.code, s.from.city, s.to.code, s.to.city, s.airline && s.airline.name, s.flightNumber])))].join(' ').toLowerCase();
@@ -2279,6 +2311,8 @@
       if (action === 'copy') copyText(clientMessage(id), btn);
       else if (action === 'copylink') copyText(url, btn);
       else if (action === 'wa') sendWhatsApp(id);
+      else if (action === 'follow') { window.open('https://wa.me/?text=' + encodeURIComponent(followMessage(id)), '_blank', 'noopener'); markFollowed(id); }
+      else if (action === 'followcopy') { copyText(followMessage(id)); markFollowed(id); toast('Mensagem de retorno copiada', 'ok', 2500); }
       else if (action === 'open') window.open(url + '&preview=1', '_blank');
       else if (action === 'edit') loadIntoForm(id, 'edit');
       else if (action === 'dup') loadIntoForm(id, 'dup');
@@ -2414,6 +2448,14 @@
     }, 200);
   }
   $('searchInput').addEventListener('input', renderList);
+  // atalhos: "/" busca, "N" novo orçamento (fora de campos de texto)
+  document.addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target, typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+    if (typing || $('sheet').classList.contains('open') || !$('loginScreen').hidden || document.querySelector('.menu.open')) return;
+    if (e.key === '/') { e.preventDefault(); $('searchInput').focus(); $('searchInput').select(); }
+    else if (e.key === 'n' || e.key === 'N') { e.preventDefault(); $('newBtn').click(); }
+  });
   setInterval(() => { if (!document.querySelector('.menu.open')) renderList(); }, 60 * 1000);
 
   // =====================================================================

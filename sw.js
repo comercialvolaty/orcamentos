@@ -1,6 +1,6 @@
 // Service worker do painel Volaty: permite instalar como app e abrir mais rápido.
 // As páginas sempre buscam a versão mais nova na internet; o que está guardado só é usado sem conexão.
-const CACHE = 'volaty-orcamentos-v3';
+const CACHE = 'volaty-orcamentos-v4';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png', './favicon-32.png'];
 
 self.addEventListener('install', e => {

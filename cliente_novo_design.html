@@ -206,6 +206,40 @@
   .btn-back:hover{ border-color:var(--char); }
   .btn-choose:disabled{ opacity:.6; cursor:default; }
 
+  /* ordenar opções */
+  .list-head{ display:flex; align-items:flex-end; justify-content:space-between; gap:10px 16px; flex-wrap:wrap; margin:30px 0 12px; }
+  .list-head .list-title{ margin:0; }
+  .sort{ display:inline-flex; background:rgba(255,255,255,.85); border:1px solid var(--line); border-radius:10px; padding:3px; }
+  .sort button{ border:0; background:transparent; color:var(--char); font-size:13.5px; font-weight:600; padding:6px 11px; border-radius:7px; cursor:pointer; white-space:nowrap; }
+  .sort button[aria-pressed="true"]{ background:var(--ink); color:#fff; }
+  @media (max-width:420px){ .sort{ width:100%; } .sort button{ flex:1; padding:7px 4px; } }
+
+  /* dúvida antes de escolher */
+  .help{ display:flex; align-items:center; gap:12px; justify-content:space-between; flex-wrap:wrap; background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-bottom:12px; }
+  .help p{ margin:0; font-size:15px; color:var(--char); }
+  .help p b{ color:var(--ink); }
+  .btn-help{ height:42px; padding:0 16px; gap:8px; background:var(--paper); color:var(--go-ink); border:1.5px solid var(--go); text-decoration:none; font-size:15px; }
+  .btn-help:hover{ background:var(--go-wash); }
+  @media (max-width:540px){ .btn-help{ width:100%; } }
+
+  .notice{ margin:22px 0 0; padding:12px 16px; border-radius:10px; background:var(--red-wash); border:1px solid #F1C3B8; color:var(--red-ink); font-size:15px; font-weight:500; }
+  .modal-err{ margin:12px 22px 0; color:var(--red-ink); font-size:14.5px; font-weight:600; }
+  .modal-err:empty{ display:none; }
+  .empty .btn{ margin-top:14px; }
+  .print-btn{ background:none; border:0; color:var(--char); text-decoration:underline; text-underline-offset:3px; cursor:pointer; font-size:14px; padding:6px; margin-top:6px; }
+  .print-btn:hover{ color:var(--ink); }
+
+  @media print{
+    @page{ margin:14mm; }
+    body{ background:#fff; padding:0; }
+    body::before, body::after{ display:none; }
+    .action, .sort, .help, .print-btn, .btn-wa, .agent-bar, .modal-bg, .details summary{ display:none !important; }
+    .opt, .done, .validity, .foot-note{ break-inside:avoid; box-shadow:none; }
+    .opt.muted{ opacity:1; }
+    .wrap{ max-width:none; }
+    .fare{ grid-template-areas:"bags price" "pay pay"; }
+  }
+
   @media (prefers-reduced-motion:reduce){ *{ animation:none !important; transition:none !important; } }
 </style>
 </head>
@@ -232,7 +266,7 @@
       <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/></svg>
       <p><b>Importante:</b> os valores estão sujeitos à disponibilidade da companhia aérea até a emissão das passagens.</p>
     </div>
-    <div class="foot-brand"><b>Volaty Turismo</b></div>
+    <div class="foot-brand"><b>Volaty Turismo</b><br><button class="print-btn" type="button" id="printBtn" hidden>Salvar em PDF ou imprimir</button></div>
   </footer>
 </div>
 
@@ -243,6 +277,7 @@
       <p>Depois de confirmar, a Volaty Turismo entra em contato para finalizar a emissão.</p>
     </div>
     <table class="sumtable" id="modalBox"></table>
+    <p class="modal-err" id="modalErr" role="alert"></p>
     <div class="modal-a">
       <button class="btn btn-back" type="button" id="modalCancel">Voltar</button>
       <button class="btn btn-choose" type="button" id="modalOk">Confirmar escolha</button>
@@ -698,7 +733,25 @@
     plane: '<svg class="plane" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/></svg>'
   };
 
-  function showMessage(msg){ $('content').innerHTML = `<div class="empty">${msg}</div>`; $('helloSub').textContent = ''; }
+  function showMessage(msg, retry){
+    $('content').innerHTML = `<div class="empty">${msg}${retry ? '<br><button class="btn btn-choose" type="button" id="retryBtn">Tentar de novo</button>' : ''}</div>`;
+    $('helloSub').textContent = '';
+    if (retry) $('retryBtn').addEventListener('click', () => { $('content').innerHTML = '<div class="loading"><div class="spinner"></div></div>'; $('helloSub').textContent = 'Carregando as opções da sua viagem…'; loadQuote(); });
+  }
+  function notice(msg){
+    const el = document.createElement('div');
+    el.className = 'notice'; el.setAttribute('role', 'alert'); el.textContent = msg;
+    $('content').prepend(el);
+  }
+  let sortBy = 'volaty';
+  function firstDep(f){ const l = f.legs[0], s = l && l.segments[0]; return ((l && l.date) || '9999') + ' ' + ((s && s.dep) || '99:99'); }
+  function lowFare(f){ let low = Infinity; (f.fares || []).forEach(r => { const t = fareTotal(quote, r); if (t > 0 && t < low) low = t; }); return low; }
+  function waHelpUrl(){
+    const num = String(WHATSAPP_EMPRESA || '').replace(/\D/g, '');
+    if (num.length < 12) return '';
+    const txt = `Olá, Volaty Turismo! Estou vendo o meu orçamento (código ${String(quoteId).slice(0, 6).toUpperCase()}) e fiquei com uma dúvida:\n\n${location.href.split('#')[0]}`;
+    return `https://wa.me/${num}?text=${encodeURIComponent(txt)}`;
+  }
 
   async function loadQuote(){
     if (!quoteId || !db) { showMessage('Orçamento não encontrado. Confira o link que você recebeu.'); return; }
@@ -721,7 +774,7 @@
       }
       render();
     } catch (e) {
-      showMessage('Não foi possível carregar o orçamento. Verifique sua conexão e tente de novo.');
+      showMessage('Não foi possível carregar o orçamento. Verifique sua internet e tente de novo.', true);
     }
   }
 
@@ -909,12 +962,26 @@
         ${optHtml(quote.flights[chosenIdx], chosenIdx, cheapest)}
         ${others ? `<h2 class="list-title">Outras opções enviadas</h2>${others}` : ''}`;
     } else {
+      // a numeração (Opção 01, 02…) continua a mesma que a Volaty enviou, só muda a ordem na tela
+      const order = quote.flights.map((f, i) => i);
+      if (sortBy === 'preco') order.sort((a, b) => lowFare(quote.flights[a]) - lowFare(quote.flights[b]));
+      else if (sortBy === 'cedo') order.sort((a, b) => firstDep(quote.flights[a]).localeCompare(firstDep(quote.flights[b])));
+      const sortBar = quote.flights.length >= 3
+        ? `<div class="sort" role="group" aria-label="Ordenar opções">${[['volaty', 'Ordem enviada'], ['preco', 'Menor preço'], ['cedo', 'Data mais cedo']].map(([k, t]) => `<button type="button" data-sort="${k}" aria-pressed="${sortBy === k}">${t}</button>`).join('')}</div>`
+        : '';
+      const wa = waHelpUrl();
+      const help = wa && !isExpired()
+        ? `<div class="help"><p><b>Ficou com alguma dúvida?</b> Fale com a Volaty antes de escolher.</p><a class="btn btn-help" href="${wa}" target="_blank" rel="noopener">${SVG.chat}Falar no WhatsApp</a></div>`
+        : '';
       $('content').innerHTML = `
         ${agentView ? '<div class="agent-bar" role="note"><b>Visualização da Volaty.</b> Esta abertura não conta como visita do cliente, e os botões de escolha ficam desativados.</div>' : ''}
         ${statusHtml()}
-        <h2 class="list-title">${many ? `${quote.flights.length} opções para você` : 'Seu voo'}</h2>
-        ${quote.flights.map((f, i) => optHtml(f, i, cheapest)).join('') || '<div class="empty">Nenhuma opção disponível.</div>'}`;
+        <div class="list-head"><h2 class="list-title">${many ? `${quote.flights.length} opções para você` : 'Seu voo'}</h2>${sortBar}</div>
+        ${order.map(i => optHtml(quote.flights[i], i, cheapest)).join('') || '<div class="empty">Nenhuma opção disponível.</div>'}
+        ${help}`;
+      document.querySelectorAll('[data-sort]').forEach(b => b.addEventListener('click', () => { sortBy = b.dataset.sort; render(); const s = document.querySelector(`[data-sort="${sortBy}"]`); if (s) s.focus({ preventScroll: true }); }));
     }
+    $('printBtn').hidden = false;
 
     document.querySelectorAll('.btn-choose[data-fare]').forEach(btn => btn.addEventListener('click', () => {
       if (quote.selection || isExpired()) return;
@@ -941,15 +1008,27 @@
     rows.push(['Passageiros', esc(paxText(quote))]);
     rows.push(['Pagamento', esc(payMethodsText(quote).join(', '))]);
     $('modalBox').innerHTML = rows.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('') + `<tr class="tot"><th>Total</th><td>${fmtBRL(total)}</td></tr>`;
-    $('modalOk').disabled = false; $('modalOk').textContent = 'Confirmar escolha';
+    $('modalOk').disabled = false; $('modalOk').textContent = 'Confirmar escolha'; $('modalErr').textContent = '';
     lastFocus = document.activeElement;
-    $('modalBg').classList.add('show');
+    $('modalBg').classList.add('show'); document.body.style.overflow = 'hidden';
     $('modalOk').focus();
   }
-  function closeConfirm(){ $('modalBg').classList.remove('show'); pending = null; if (lastFocus && lastFocus.focus) lastFocus.focus(); }
+  function closeConfirm(){ $('modalBg').classList.remove('show'); document.body.style.overflow = ''; pending = null; if (lastFocus && lastFocus.focus) lastFocus.focus(); }
   $('modalCancel').addEventListener('click', closeConfirm);
   $('modalBg').addEventListener('click', e => { if (e.target === $('modalBg')) closeConfirm(); });
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('modalBg').classList.contains('show')) closeConfirm(); });
+  document.addEventListener('keydown', e => {
+    if (!$('modalBg').classList.contains('show')) return;
+    if (e.key === 'Escape') closeConfirm();
+    // mantém o foco do teclado dentro da janela de confirmação
+    if (e.key === 'Tab') {
+      const a = $('modalCancel'), b = $('modalOk');
+      if (e.shiftKey && document.activeElement === a) { e.preventDefault(); b.focus(); }
+      else if (!e.shiftKey && document.activeElement === b) { e.preventDefault(); a.focus(); }
+      else if (document.activeElement !== a && document.activeElement !== b) { e.preventDefault(); b.focus(); }
+    }
+  });
+  window.addEventListener('beforeprint', () => document.querySelectorAll('details').forEach(d => d.open = true));
+  $('printBtn').addEventListener('click', () => window.print());
 
   $('modalOk').addEventListener('click', async () => {
     if (!pending || !db) return;
@@ -961,9 +1040,9 @@
       const res = await runTransaction(ref(db, 'orcamentos/' + quoteId + '/selection'), cur => cur ? undefined : choice);
       const fresh = await get(ref(db, 'orcamentos/' + quoteId));
       quote = normalizeQuote(fresh.val());
-      $('modalBg').classList.remove('show'); pending = null;
+      $('modalBg').classList.remove('show'); document.body.style.overflow = ''; pending = null;
       render();
-      if (!res.committed) alert('Este orçamento já tinha uma escolha registrada.');
+      if (!res.committed) notice('Este orçamento já tinha uma escolha registrada. Se quiser mudar, fale com a Volaty.');
       else {
         const sc = findSelected(quote);
         if (sc && !sc.missing) {
@@ -984,8 +1063,8 @@
       window.scrollTo({ top: 0, behavior: 'smooth' });
       if ($('waBtn')) setTimeout(() => $('waBtn').focus({ preventScroll: true }), 400);
     } catch (e) {
-      $('modalOk').disabled = false; $('modalOk').textContent = 'Confirmar escolha';
-      alert('Não foi possível registrar sua escolha. Tente de novo.');
+      $('modalOk').disabled = false; $('modalOk').textContent = 'Tentar de novo';
+      $('modalErr').textContent = navigator.onLine === false ? 'Sem internet no momento. Conecte-se e toque em “Tentar de novo”.' : 'Não foi possível registrar sua escolha. Toque em “Tentar de novo”.';
     }
   });
 
