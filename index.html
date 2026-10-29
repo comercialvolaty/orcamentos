@@ -1016,7 +1016,9 @@
   function pushNotify(msg){
     if (!NOTIFY.topic) return Promise.resolve(false);
     // corpo em JSON sem cabeçalho de tipo: evita bloqueio do navegador (CORS)
-    return fetch(NOTIFY.server + '/', { method: 'POST', body: JSON.stringify(Object.assign({ topic: NOTIFY.topic }, msg)), keepalive: true })
+    // ícone da Volaty na notificação (o app ntfy no Android mostra a imagem ao lado do texto)
+    const icon = location.href.split('?')[0].split('#')[0].replace(/[^/]*$/, '') + 'icon-192.png';
+    return fetch(NOTIFY.server + '/', { method: 'POST', body: JSON.stringify(Object.assign({ topic: NOTIFY.topic, icon }, msg)), keepalive: true })
       .then(r => r.ok).catch(() => false);
   }
 
